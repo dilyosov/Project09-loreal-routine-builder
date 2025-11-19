@@ -12,6 +12,44 @@
       rel="stylesheet"
       href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css"
     />
+    <!-- Dynamically load Bootstrap (LTR or RTL) based on the user's language, then apply site CSS -->
+    <script>
+      (function () {
+        // languages that require RTL layout
+        const rtlLangs = [
+          "ar",
+          "he",
+          "fa",
+          "ur",
+          "ps",
+          "syr",
+          "dv",
+          "ku",
+          "yi",
+        ];
+
+        const doc = document.documentElement;
+        const navLang =
+          (navigator.languages && navigator.languages[0]) ||
+          navigator.language ||
+          doc.lang ||
+          "en";
+        const primary = String(navLang).split("-")[0];
+        const isRtl = rtlLangs.includes(primary);
+
+        doc.lang = navLang;
+        doc.dir = isRtl ? "rtl" : "ltr";
+        if (isRtl) doc.classList.add("rtl");
+
+        // Load Bootstrap (RTL or LTR) before our site CSS so our overrides apply
+        const bs = document.createElement("link");
+        bs.rel = "stylesheet";
+        bs.href = isRtl
+          ? "https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.rtl.min.css"
+          : "https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css";
+        document.head.appendChild(bs);
+      })();
+    </script>
     <link rel="stylesheet" href="style.css" />
   </head>
 
@@ -25,7 +63,10 @@
 
       <!-- Category Filter -->
       <div class="search-section">
-        <select id="categoryFilter">
+        <label for="categoryFilter" class="visually-hidden"
+          >Choose a category</label
+        >
+        <select id="categoryFilter" aria-label="Choose a category">
           <option value="" disabled selected>Choose a Category</option>
           <option value="cleanser">Cleansers</option>
           <option value="moisturizer">Moisturizers & Treatments</option>
@@ -37,6 +78,12 @@
           <option value="suncare">Suncare</option>
           <option value="fragrance">Fragrance</option>
         </select>
+        <input
+          id="productSearch"
+          type="search"
+          placeholder="Search product"
+          aria-label="Search products"
+        />
       </div>
 
       <!-- Products Grid -->
@@ -46,9 +93,18 @@
       <div class="selected-products">
         <h2>Selected Products</h2>
         <div id="selectedProductsList"></div>
-        <button id="generateRoutine" class="generate-btn">
-          <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Routine
-        </button>
+        <div class="selected-actions">
+          <button id="generateRoutine" class="generate-btn">
+            <i class="fa-solid fa-wand-magic-sparkles"></i> Generate Routine
+          </button>
+          <button
+            id="clearSelections"
+            class="generate-btn"
+            aria-label="Clear selected products"
+          >
+            Clear Selections
+          </button>
+        </div>
       </div>
 
       <!------- Chat Area ------->
@@ -58,6 +114,19 @@
 
         <form id="chatForm" class="chat-form">
           <label for="userInput" class="visually-hidden">Message</label>
+          <label
+            style="
+              display: flex;
+              align-items: center;
+              gap: 8px;
+              margin-right: 8px;
+            "
+          >
+            <input type="checkbox" id="liveSearch" name="liveSearch" />
+            <span style="font-size: 13px; color: var(--muted)"
+              >Live web search</span
+            >
+          </label>
           <input
             id="userInput"
             name="userInput"
@@ -86,7 +155,123 @@
     </div>
 
     <!-- secrets.js can be removed when using Cloudflare Workers for API requests -->
-    <script src="secrets.js"></script>
+    <!-- Product details modal -->
+    <div
+      id="productModal"
+      class="modal"
+      aria-hidden="true"
+      role="dialog"
+      aria-modal="true"
+    >
+      <div class="modal-backdrop" data-close="true"></div>
+      <div class="modal-content" role="document">
+        <button class="modal-close" aria-label="Close details">&times;</button>
+        <div class="modal-header">
+          <h3 id="modalTitle"></h3>
+          <div id="modalBrand" class="modal-brand"></div>
+        </div>
+        <div id="modalBody" class="modal-body"></div>
+      </div>
+    </div>
+    <!-- Content-based RTL detector: handles translations or dynamic text changes -->
+    <script>
+      (function () {
+        // Unicode ranges covering common RTL scripts (Hebrew, Arabic, Syriac, Thaana, etc.)
+        const rtlRegex = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/;
+
+        function countRtlChars(s) {
+          let c = 0;
+          for (const ch of s) if (rtlRegex.test(ch)) c++;
+          return c;
+        }
+
+        function detectRtlByContent() {
+          if (!document.body) return null;
+          const walker = document.createTreeWalker(
+            document.body,
+            NodeFilter.SHOW_TEXT,
+            {
+              acceptNode(node) {
+                if (!node.nodeValue) return NodeFilter.FILTER_REJECT;
+                const t = node.nodeValue.trim();
+                if (t.length < 3) return NodeFilter.FILTER_REJECT;
+                return NodeFilter.FILTER_ACCEPT;
+              },
+            }
+          );
+
+          let total = 0,
+            rtl = 0,
+            nodes = 0;
+          const MAX_NODES = 300;
+          let node;
+          while ((node = walker.nextNode()) && nodes++ < MAX_NODES) {
+            const text = node.nodeValue.trim();
+            total += text.length;
+            rtl += countRtlChars(text);
+          }
+          if (total < 20) return null;
+          return rtl / total > 0.2;
+        }
+
+        function applyDirection(isRtl) {
+          const doc = document.documentElement;
+          if (isRtl) {
+            doc.dir = "rtl";
+            doc.classList.add("rtl");
+          } else {
+            doc.dir = "ltr";
+            doc.classList.remove("rtl");
+          }
+        }
+
+        function decideDirection() {
+          const byContent = detectRtlByContent();
+          if (byContent !== null) {
+            applyDirection(byContent);
+            return;
+          }
+          // fallback to navigator language
+          const rtlLangs = [
+            "ar",
+            "he",
+            "fa",
+            "ur",
+            "ps",
+            "ku",
+            "yi",
+            "dv",
+            "syr",
+          ];
+          const nav =
+            (navigator.languages && navigator.languages[0]) ||
+            navigator.language ||
+            document.documentElement.lang ||
+            "en";
+          const primary = String(nav).split("-")[0];
+          applyDirection(rtlLangs.includes(primary));
+        }
+
+        decideDirection();
+
+        // Re-check when the DOM changes (for dynamic translations)
+        function debounce(fn, t = 250) {
+          let timer;
+          return (...a) => {
+            clearTimeout(timer);
+            timer = setTimeout(() => fn(...a), t);
+          };
+        }
+
+        const mo = new MutationObserver(debounce(() => decideDirection(), 300));
+        mo.observe(document.body, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+        });
+      })();
+    </script>
+
     <script src="script.js"></script>
   </body>
 </html>
